@@ -73,27 +73,27 @@ RUN sudo chown -R ${CREATE_USER}:${CREATE_USER} ${HOME} && \
     conda init bash && \
     conda create -n jupyterhub_env python=3 -y && \
     echo "conda activate jupyterhub_env" >> ~/.bashrc && \
-    conda install -n jupyterhub_env -c conda-forge nodejs jupyterhub jupyterlab=3.2.6 notebook jupyter-rsession-proxy nb_conda_kernels ipykernel git -y && \
+    conda install -n jupyterhub_env -c conda-forge nodejs jupyterhub jupyterlab=3.2.6 notebook nb_conda_kernels ipykernel git -y && \
     conda install -n jupyterhub_env -c conda-forge jupyterlab-language-pack-zh-CN jupyterlab-git jupyterlab-system-monitor jupyter_nbextensions_configurator jupyter_contrib_nbextensions \
     jupyterlab-unfold jupyterlab-variableinspector -y && \
     conda install -n jupyterhub_env -c conda-forge nbresuse ipydrawio[all] jedi ipympl black isort theme-darcula ipywidgets \
     tensorboard jupyterlab_execute_time jupyterlab_latex jupyter_bokeh -y && \
     /home/${CREATE_USER}/.conda/envs/jupyterhub_env/bin/pip install "jupyterlab-kite>=2.0.2"
-    
-# create plot_env
-RUN conda create -n plot_env python=3 -y && \
-    conda install -n plot_env -c conda-forge schedule bokeh seaborn pandas numpy matplotlib requests ipykernel -y && \
-    /home/${CREATE_USER}/.conda/envs/plot_env/bin/pip install pyg2plot
 
 ARG R_VERSION="4.2.0"
 ENV R_VERSION=${R_VERSION}
-ENV RSTUDIO_WHICH_R ~/.conda/envs/r_env/bin/R
-# create r_env
+# create r_env jupyter-rsession-proxy 反向代理插件
 RUN conda install -n jupyterhub_env -c r r-irkernel r-base=${R_VERSION} r-essentials -y && \
-    conda install -n jupyterhub_env -c conda-forge radian jupyter-rsession-proxy nb_conda_kernels -y && \
-    conda create -n r_env python=3 -y && \
-    conda install -n r_env -c r r-irkernel r-base=${R_VERSION} r-essentials -y && \
-    conda install -n r_env -c conda-forge radian jupyter-rsession-proxy nb_conda_kernels -y
+    conda install -n jupyterhub_env -c conda-forge radian nb_conda_kernels jupyter-rsession-proxy -y
+    # conda create -n r_env python=3 -y && \
+    # conda install -n r_env -c r r-irkernel r-base=${R_VERSION} r-essentials -y && \
+    # conda install -n r_env -c conda-forge radian nb_conda_kernels -y
+ENV RSTUDIO_WHICH_R ~/.conda/envs/jupyterhub_env/bin/R
+
+# create plot_env
+# RUN conda create -n plot_env python=3 -y && \
+#     conda install -n plot_env -c conda-forge schedule bokeh seaborn pandas numpy matplotlib requests ipykernel -y && \
+#     /home/${CREATE_USER}/.conda/envs/plot_env/bin/pip install pyg2plot
 
 # install kite https://zhuanlan.zhihu.com/p/478749186
 # install kite only for single user, not support muti-users
@@ -103,16 +103,26 @@ ENV DEBIAN_FRONTEND=${DEBIAN_FRONTEND}
 ENV PATH /opt/conda/bin:$PATH
 ARG JUPYTER_AUTHENTICATOR_CLASS="jupyterhub.auth.PAMAuthenticator"
 RUN mkdir -p ./.jupyter && \
-    echo "c.JupyterHub.authenticator_class ='${JUPYTER_AUTHENTICATOR_CLASS}'\n\
+    echo "import os\n\
+from pathlib import Path\n\
+p = Path(os.getenv('JUPYTERHUB_DATA'))\n\
+# add ssl certification\n\
+if ssl_key_env:=os.getenv('SSL_KEY'):\n\
+    if p.joinpath(ssl_key_env).absolute().exists():\n\
+        c.JupyterHub.ssl_key=p.joinpath(ssl_key_env).absolute().__str__()\n\
+if ssl_cert_env:=os.getenv('SSL_CERT'):\n\
+    if p.joinpath(ssl_cert_env).absolute().exists():\n\
+        c.JupyterHub.ssl_cert=p.joinpath(ssl_cert_env).absolute().__str__()\n\
+c.JupyterHub.authenticator_class ='${JUPYTER_AUTHENTICATOR_CLASS}'\n\
 c.JupyterHub.ip ='0.0.0.0'\n\
 c.JupyterHub.port =8000\n\
 c.Spawner.ip ='127.0.0.1'\n\
 c.Spawner.default_url = '/lab'\n\
 c.PAMAuthenticator.encoding ='utf8'\n\
-c.Authenticator.allowed_users = {'root', 'admin'}\n\
+c.Authenticator.allowed_users = {'admin'}\n\
 c.LocalAuthenticator.create_system_users = True\n\
-c.Authenticator.admin_users = {'root', 'admin'}\n\
-c.Spawner.args = ['--allow-root']\n\
+c.Authenticator.admin_users = {'admin'}\n\
+#c.Spawner.args = ['--allow-root']\n\
 c.JupyterHub.statsd_prefix ='jupyterhub'\n\
 c.Spawner.notebook_dir ='~/jupyterhub_data'\n\
 c.JupyterHub.shutdown_on_logout = True\n\
@@ -135,11 +145,13 @@ nohup jupyterhub -f ./jupyterhub_config.py > ./jupyter.log 2>&1 &\n\
 # https://blog.csdn.net/weixin_42902669/article/details/108896133
 EXPOSE 8000
 EXPOSE 22
-VOLUME "${HOME}/jupyterhub_data"
+ENV JUPYTERHUB_DATA="${HOME}/jupyterhub_data"
+VOLUME JUPYTERHUB_DATA
 WORKDIR "${HOME}/.jupyter"
 ENTRYPOINT ["/bin/bash","./entrypoint.sh"]
 
-# docker run --name myjupyterhub --restart unless-stopped -p 48888:8000 -p 48822:22 -v /C/Users/user/hotwaprogram/dockerfiles/jupyterhub/test_data:/home/admin/jupyterhub_data -itd hotwa/jupyterhub:latest
+# SSL_KEY,SSL_CERT,SSL_CA
+# docker run --name myjupyterhub --restart unless-stopped -e ./.ssl/.key -e ./.ssl/.cert -p 48888:8000 -p 48822:22 -v /C/Users/user/hotwaprogram/dockerfiles/jupyterhub/test_data:/home/admin/jupyterhub_data -itd hotwa/jupyterhub:latest
 # docker buildx build --platform linux/amd64,linux/arm64 -t hotwa/jupyterhub:latest -f .\admin.dockerfile . 
 # install nodejs
 # apt-get install gpg -y && \
